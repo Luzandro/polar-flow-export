@@ -1,7 +1,6 @@
+#!/usr/bin/env python2
 """
 Tool for bulk exporting a range of TCX files from Polar Flow.
-
-exported files are written to the folder "tcx_export" in the current working directory
 
 
 slightly modified version of this command line tool:
@@ -49,14 +48,19 @@ class ThrottlingHandler(urllib2.BaseHandler):
 #------------------------------------------------------------------------------
 
 class TcxFile(object):
-    def __init__(self, workout_id, date_str, content):
+    def __init__(self, workout_id, date_str, content_request):
         self.workout_id = workout_id
         self.date_str = date_str
-        self.content = content
-        # strip away Creator/Author section, so that the TCX-files can be imported to Garmin Connect
-        # see: https://forums.garmin.com/forum/into-sports/garmin-connect/79753-polar-flow-tcx-export-to-garmin-connect
-        self.content = re.sub(r'<Creator.*</Creator>', '', self.content, flags=re.DOTALL)
-        self.content = re.sub(r'<Author.*</Author>', '', self.content, flags=re.DOTALL)
+        self._content_request = content_request
+
+    def get_content(self, make_garmin_compatible=True):
+        content = self._content_request()
+        if make_garmin_compatible:
+            # strip away Creator/Author section, so that the TCX-files can be imported to Garmin Connect
+            # see: https://forums.garmin.com/forum/into-sports/garmin-connect/79753-polar-flow-tcx-export-to-garmin-connect
+            content = re.sub(r'<Creator.*</Creator>', '', content, flags=re.DOTALL)
+            content = re.sub(r'<Author.*</Author>', '', content, flags=re.DOTALL)
+        return content
 
 
 #------------------------------------------------------------------------------
@@ -137,10 +141,12 @@ class PolarFlowExporter(object):
             return TcxFile(
                 activity_ref['listItemId'],
                 activity_ref['datetime'],
-                self._execute_request(
-                    "%s/export/tcx/false" % activity_ref['url']))
+                lambda :self._execute_request(
+                    "%s/export/tcx/false" % activity_ref['url'])
+                )
 
-        return (get_tcx_file(activity_ref) for activity_ref in activity_refs)
+        return (get_tcx_file(activity_ref) for activity_ref in activity_refs
+            if activity_ref['type'] not in ["TRAININGTARGET", "FITNESSDATA"])
 
 #------------------------------------------------------------------------------
 
@@ -175,11 +181,7 @@ class GUI(tkSimpleDialog.Dialog):
             return 0
         return 1
 
-#------------------------------------------------------------------------------
-
-if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO)
-
+def get_arguments_from_GUI():
     root = Tk()
     root.withdraw()
     d = GUI(root)
@@ -189,6 +191,41 @@ if __name__ == '__main__':
         sys.exit(1)
     to_date_str = str(datetime.date.today())    
     output_dir = "./tcx_export"
+    make_garmin_compatible = True
+    return (username, password, from_date_str, to_date_str, output_dir, make_garmin_compatible)
+
+def get_arguments_from_commandline():
+    try:
+        (username, password, from_date_str, 
+            to_date_str, output_dir) = sys.argv[1:6]
+        if len(sys.argv) == 7:
+            make_garmin_compatible = str2bool(sys.argv[6])
+        else:
+            make_garmin_compatible = False
+    except ValueError:
+        sys.stderr.write(("Usage: %s <username> <password> <from_date> "
+            "<to_date> <output_dir> [make_garmin_compatible]\n") % sys.argv[0])
+        sys.exit(1)
+    return (username, password, from_date_str, to_date_str, output_dir, make_garmin_compatible)
+
+def str2bool(v):
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
+
+#------------------------------------------------------------------------------
+
+if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO)
+    print len(sys.argv)
+    if len(sys.argv) > 1:
+        (username, password, from_date_str, to_date_str, output_dir, make_garmin_compatible) = get_arguments_from_commandline()
+    else:
+        (username, password, from_date_str, to_date_str, output_dir, make_garmin_compatible) = get_arguments_from_GUI()
+
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
     exporter = PolarFlowExporter(username, password)
@@ -196,8 +233,14 @@ if __name__ == '__main__':
         filename = "%s_%s.tcx" % (
                         tcx_file.date_str.replace(':', '_'),
                         tcx_file.workout_id)
-        output_file = open(os.path.join(output_dir, filename), 'wb')
-        output_file.write(tcx_file.content)
+        filepath = os.path.join(output_dir, filename)
+        if os.path.exists(filepath):
+            logging.info("skipping %s" % filename)
+            continue
+
+        content = tcx_file.get_content(make_garmin_compatible)
+        output_file = open(filepath, 'wb')
+        output_file.write(content)
         output_file.close()
         print "Wrote file %s" % filename
 
