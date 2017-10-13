@@ -15,6 +15,7 @@ import datetime
 import json
 import logging
 import os
+import pickle
 import sys
 import time
 import tkSimpleDialog
@@ -153,6 +154,7 @@ class PolarFlowExporter(object):
 class GUI(tkSimpleDialog.Dialog):
     def body(self,parent):
         self.entries = {}
+        settings = load_settings()
         formfields = ["username", "password", "start_date"]
         for label in formfields:
             row = Frame(parent)
@@ -161,9 +163,9 @@ class GUI(tkSimpleDialog.Dialog):
             row.pack(side=TOP, padx=10, pady=10)
             row_label.pack(side=LEFT)
             row_entry.pack(side=LEFT)
+            row_entry.insert(0, settings[label])
             self.entries[label] = row_entry
         self.entries["password"].config(show="*")
-        self.entries["start_date"].insert(0, "2017-01-31")
         return self.entries["username"].focus()
 
     def apply(self):
@@ -208,6 +210,20 @@ def get_arguments_from_commandline():
         sys.exit(1)
     return (username, password, from_date_str, to_date_str, output_dir, make_garmin_compatible)
 
+def load_settings():
+    try:
+        with open('settings.pickle', 'r') as f:
+             settings = pickle.load(f)
+    except:
+        settings = {"username": '', 
+                    "password": '', 
+                    "start_date": '2017-01-31'}
+    return settings
+
+def save_settings(settings):
+    with open('settings.pickle', 'wb') as f:
+        pickle.dump(settings, f)
+
 def str2bool(v):
     if v.lower() in ('yes', 'true', 't', 'y', '1'):
         return True
@@ -245,3 +261,7 @@ if __name__ == '__main__':
         print "Wrote file %s" % filename
 
     print "Export complete"
+    save_settings({
+        "username": username,
+        "password": password,
+        "start_date": to_date_str})
